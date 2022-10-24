@@ -258,8 +258,8 @@ const App = () => {
                     <pre>
                         {JSON.stringify(schema, null, 2)}
                     </pre>
-                    <button onClick={() => {localStorage.setItem("firebaseSchema", JSON.stringify(schema))}}>Save</button>
-                    <button onClick={() => {setSchema(JSON.parse(localStorage.getItem("firebaseSchema")))}} disabled={!localStorage.getItem("firebaseSchema")}>Load</button>
+                    <button onClick={() => {localStorage.setItem("firebaseSchema", JSON.stringify(schema))}}>Save to Local Storage</button>
+                    <button onClick={() => {setSchema(JSON.parse(localStorage.getItem("firebaseSchema")))}} disabled={!localStorage.getItem("firebaseSchema")}>Load from Local Storage</button>
                 </div>
             </div>
         </div>
