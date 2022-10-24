@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import './App.css';
 
+const authCheck = "request.auth != null";
+
 const ruleTemplates = {
     type: (field) => `data.${field.name} is ${field.rules.type}`,
     regex: (field) => `data.${field.name}.matches('${field.rules.regex}')`,
     maxLength: (field) => `data.${field.name}.length <= ${field.rules.maxLength}`,
-    minLength: (field) => `data.${field.name}.length >= ${field.rules.minLength}`
+    minLength: (field) => `data.${field.name}.length >= ${field.rules.minLength}`,
+    canBeEmpty: (field) => `data.${field.name} == ''`
 }
 
 const capitalize = (s) => {
@@ -33,7 +36,7 @@ const App = () => {
 
         // Generate rule blocks
         for (let model of schema) {
-            rules += generateRuleBlock(model.name);
+            rules += generateRuleBlock(model);
         }
 
         rules += "\t}\n";
@@ -42,13 +45,18 @@ const App = () => {
         setRules(rules);
     }
 
-    const generateRuleBlock = (modelName) => {
-        let functionName = `validate${capitalize(modelName)}Model(request.resource.data)`;
+    const generateRuleBlock = (model) => {
+        let modelName = model.name;
+
+        const functionName = `validate${capitalize(modelName)}Model(request.resource.data)`;
+        const authCheckAndOwnerCheck = `${authCheck} && ownedByCaller(resource.data.${model.ownerField})`;
         let ruleBlock = "";
 
         ruleBlock += `\t\tmatch /${modelName}/{${modelName}Document} {\n`;
-        ruleBlock += `\t\t\tallow create: if ${functionName};\n`;
-        ruleBlock += `\t\t\tallow read: if true;\n`;
+        ruleBlock += `\t\t\tallow read: if ${model.readAllAuthRequired ? authCheck : 'true'};\n`;
+        ruleBlock += `\t\t\tallow create: if ${model.createAuthRequired ? authCheck : 'true'} && ${functionName};\n`;
+        ruleBlock += `\t\t\tallow update: if ${model.updateAuthRequired ? authCheckAndOwnerCheck : 'true'} && ${functionName};\n`;
+        ruleBlock += `\t\t\tallow delete: if ${model.deleteAuthRequired ? authCheckAndOwnerCheck : 'true'};\n`;
         ruleBlock += `\t\t}\n`;
 
         return ruleBlock;
@@ -56,6 +64,12 @@ const App = () => {
 
     const generateValidationFunctionBlock = () => {
         let ruleFunctions = "";
+
+        ruleFunctions += "\t\tfunction ownedByCaller(ownerId) {\n";
+		ruleFunctions += "\t\t\treturn\n";
+		ruleFunctions += "\t\t\t\trequest.auth.uid == ownerId;\n";
+		ruleFunctions += "\t\t}\n";
+
         for (let model of schema) {
             ruleFunctions += processModel(model) + "\n";
         }
@@ -72,6 +86,15 @@ const App = () => {
                 if (ruleName === "type" && !["string", "number", "boolean", "object", "array"].includes(field.rules.type)) {
                     let subFunction = `validate${capitalize(field.rules.type)}Model(data.${field.name})`;
                     ruleFunction += `${sep} ${subFunction}`;
+                    continue;
+                }
+
+                if (ruleName === "regex" && field.rules.canBeEmpty) {
+                    ruleFunction += `${sep} (${ruleTemplates.canBeEmpty(field)} || ${ruleTemplates.regex(field)})`;
+                    continue;
+                }
+
+                if (ruleName === "canBeEmpty") {
                     continue;
                 }
 
@@ -101,14 +124,10 @@ const App = () => {
         }]);
     }
 
-    const updateModelName = (modelIndex, newModelName) => {
-        if (!newModelName) {
-            newModelName = "";
-        }
-
+    const updateModel = (modelIndex, field, value) => {
         let schemaCopy = [...schema];
         let model = {...schema[modelIndex]};
-        model.name = newModelName;
+        model[field] = value;
         schemaCopy[modelIndex] = model;
 
         setSchema(schemaCopy);
@@ -158,53 +177,90 @@ const App = () => {
     }, [schema]);
 
     return (
-        <div className="generator-div">
-            <div id="generator-form">
-                <label>Object Schema</label>
-                { schema.map((model, modelIndex) => {
-                    return (
-                        <div className="model">
-                            <label>Model Name</label>
-                            <input value={model.name} onChange={({target: {value: newModelName}}) => {updateModelName(modelIndex, newModelName)}} />
-                            { model.fields.map((field, fieldIndex) => {
-                                return (
-                                    <div className="field"> 
-                                        <label>Field Name</label>
-                                        <input value={field.name} onChange={({target: {value: newFieldName}}) => {updateFieldName(modelIndex, fieldIndex, newFieldName)}} />
-                                        <label>Type</label>
-                                        <select onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "type", value)}} value={field.rules.type}>
-                                            <option>string</option>
-                                            <option>number</option>
-                                            <option>bool</option>
-                                            <option>object</option>
-                                            <option>array</option>
-                                            { schema.map(model => <option>{model.name}</option>) }
-                                        </select>
-                                        <label>Regex</label>
-                                        <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "regex", value)}} value={field.rules.regex} />
-                                        <label>Min Length</label>
-                                        <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "minLength", value)}} value={field.rules.minLength} />
-                                        <label>Max Length</label>
-                                        <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "maxLength", value)}} value={field.rules.maxLength} />
+        <div>
+            <h1>Firebase Rule Generator</h1>
+            <div className="generator-div">
+                <div id="generator-form">
+                    { schema.map((model, modelIndex) => {
+                        return (
+                            <div className="model">
+                                <label>Collection</label>
+                                <input value={model.name} onChange={({target: {value: newModelName}}) => {updateModel(modelIndex, "name", newModelName)}} />
+                                <div className="field">
+                                    <div>
+                                        <input type="checkbox" onChange={({target: {checked}}) => {updateModel(modelIndex, "readAllAuthRequired", checked)}} checked={model.readAllAuthRequired} />
+                                        <label>Read All Requires Auth</label>
                                     </div>
-                                );
-                            })}
-                            <button onClick={() => {addField(modelIndex)}}>Add Field</button>
-                        </div>
-                    )
-                })}
-                <button onClick={addModel}>New Model</button>
-            </div>
-            <div id="generated-rules">
-                <h2>Rules</h2>
-                <pre>
-                    {rules.replaceAll("\t", "  ")}
-                </pre>
-                <div></div>
-                <h2>Data</h2>
-                <pre>
-                    {JSON.stringify(schema, null, 2)}
-                </pre>
+                                    <div>
+                                        <input type="checkbox" onChange={({target: {checked}}) => {updateModel(modelIndex, "readOneAuthRequired", checked)}} checked={model.readOneAuthRequired} />
+                                        <label>Read One Requires Auth</label>
+                                    </div>
+                                    <div>
+                                        <input type="checkbox" onChange={({target: {checked}}) => {updateModel(modelIndex, "createAuthRequired", checked)}} checked={model.createAuthRequired} />
+                                        <label>Create Requires Auth</label>
+                                    </div>
+                                    <div>
+                                        <input type="checkbox" onChange={({target: {checked}}) => {updateModel(modelIndex, "deleteAuthRequired", checked)}} checked={model.deleteAuthRequired} />
+                                        <label>Delete Requires Auth</label>
+                                    </div>
+                                    <div>
+                                        <input type="checkbox" onChange={({target: {checked}}) => {updateModel(modelIndex, "updateAuthRequired", checked)}} checked={model.updateAuthRequired} />
+                                        <label>Update Requires Auth</label>
+                                    </div>
+                                    <label>Owner Field</label>
+                                    <select onChange={({target: {value}}) => {updateModel(modelIndex, "ownerField", value)}} value={model.ownerField} disabled={!model.updateAuthRequired && !model.deleteAuthRequired}>
+                                        { model.fields.map(field => {
+                                            return <option>{field.name}</option>
+                                        })}
+                                    </select>
+                                </div>
+                                { model.fields.map((field, fieldIndex) => {
+                                    return (
+                                        <div className="field"> 
+                                            <label>Field Name</label>
+                                            <input value={field.name} onChange={({target: {value: newFieldName}}) => {updateFieldName(modelIndex, fieldIndex, newFieldName)}} />
+                                            <label>Type</label>
+                                            <select onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "type", value)}} value={field.rules.type}>
+                                                <option>string</option>
+                                                <option>number</option>
+                                                <option>bool</option>
+                                                <option>object</option>
+                                                <option>array</option>
+                                                { schema.map(model => <option>{model.name}</option>) }
+                                            </select>
+                                            <label>Regex</label>
+                                            <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "regex", value)}} value={field.rules.regex} />
+                                            <label>Min Length</label>
+                                            <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "minLength", value)}} value={field.rules.minLength} />
+                                            <label>Max Length</label>
+                                            <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "maxLength", value)}} value={field.rules.maxLength} />
+                                            <div>
+                                                <input type="checkbox" onChange={({target: {checked}}) => {updateField(modelIndex, fieldIndex, "canBeEmpty", checked)}} checked={field.rules.canBeEmpty} />
+                                                <label>Can be empty</label>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                <button onClick={() => {addField(modelIndex)}}>Add Field</button>
+                            </div>
+                        )
+                    })}
+                    <button onClick={addModel}>New Model</button>
+                </div>
+                <div id="generated-rules">
+                    <h2>Rules</h2>
+                    <pre>
+                        {rules.replaceAll("\t", "  ")}
+                    </pre>
+                    <button onClick={() => {navigator.clipboard.writeText(rules.replaceAll("\t", "  "))}}>Copy</button>
+                    <div></div>
+                    <h2>Data</h2>
+                    <pre>
+                        {JSON.stringify(schema, null, 2)}
+                    </pre>
+                    <button onClick={() => {localStorage.setItem("firebaseSchema", JSON.stringify(schema))}}>Save</button>
+                    <button onClick={() => {setSchema(JSON.parse(localStorage.getItem("firebaseSchema")))}} disabled={!localStorage.getItem("firebaseSchema")}>Load</button>
+                </div>
             </div>
         </div>
     );
