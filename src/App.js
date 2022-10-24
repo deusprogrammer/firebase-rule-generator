@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import './App.css';
 
 const ruleTemplates = {
-    type: (field) => `request.resource.data.${field.name} is ${field.rules.type}`,
-    regex: (field) => `request.resource.data.${field.name}.matches('${field.rules.regex}')`,
-    maxLength: (field) => `request.resource.data.${field.name}.length <= ${field.rules.maxLength}`,
-    minLength: (field) => `request.resource.data.${field.name}.length >= ${field.rules.minLength}`
+    type: (field) => `data.${field.name} is ${field.rules.type}`,
+    regex: (field) => `data.${field.name}.matches('${field.rules.regex}')`,
+    maxLength: (field) => `data.${field.name}.length <= ${field.rules.maxLength}`,
+    minLength: (field) => `data.${field.name}.length >= ${field.rules.minLength}`
 }
 
 const capitalize = (s) => {
@@ -43,7 +43,7 @@ const App = () => {
     }
 
     const generateRuleBlock = (modelName) => {
-        let functionName = `validate${capitalize(modelName)}Model()`;
+        let functionName = `validate${capitalize(modelName)}Model(request.resource.data)`;
         let ruleBlock = "";
 
         ruleBlock += `\t\tmatch /${modelName}/{${modelName}Document} {\n`;
@@ -64,11 +64,17 @@ const App = () => {
     }
 
     const processModel = (model) => {
-        let ruleFunction = `\t\tfunction validate${capitalize(model.name)}Model() {\n\t\t\treturn`;
+        let ruleFunction = `\t\tfunction validate${capitalize(model.name)}Model(data) {\n\t\t\treturn`;
         let outerSep = "";
         for (let field of model.fields) {
             let sep = `${outerSep}\n\t\t\t`;
             for (let ruleName in field.rules) {
+                if (ruleName === "type" && !["string", "number", "boolean", "object", "array"].includes(field.rules.type)) {
+                    let subFunction = `validate${capitalize(field.rules.type)}Model(data.${field.name})`;
+                    ruleFunction += `${sep} ${subFunction}`;
+                    continue;
+                }
+
                 let transform = ruleTemplates[ruleName];
                 let ruleValue = field.rules[ruleName];
                 if (transform && ruleValue) {
@@ -79,6 +85,11 @@ const App = () => {
             outerSep = " &&";
         }
         ruleFunction += ";\n\t\t}";
+
+        // ruleFunction += `\n\t\tfunction validate${capitalize(model.name)}ModelArray(data, n) {\n\t\t\treturn`;
+        // ruleFunction += `\n\t\t\t\tvalidate${capitalize(model.name)}Model(data[n]) &&`;
+        // ruleFunction += `\n\t\t\t\tvalidate${capitalize(model.name)}ModelArray(data, n+1)`
+        // ruleFunction += ";\n\t\t}";
 
         return ruleFunction;
     }
@@ -167,6 +178,7 @@ const App = () => {
                                             <option>bool</option>
                                             <option>object</option>
                                             <option>array</option>
+                                            { schema.map(model => <option>{model.name}</option>) }
                                         </select>
                                         <label>Regex</label>
                                         <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "regex", value)}} value={field.rules.regex} />
