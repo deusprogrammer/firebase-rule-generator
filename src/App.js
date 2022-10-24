@@ -1,72 +1,145 @@
 import { useEffect, useState } from 'react';
 import './App.css';
 
-const schemaFieldTemplates = {
-    type: (field, fieldSchema) => `request.resource.data.${field} is ${fieldSchema.type}`,
-    regex: (field, fieldSchema) => `request.resource.data.${field}.matches('${fieldSchema.regex}')`,
-    maxLength: (field, fieldSchema) => `request.resource.data.${field}.length <= ${fieldSchema.maxLength}`,
-    minLength: (field, fieldSchema) => `request.resource.data.${field}.length >= ${fieldSchema.minLength}`
+const ruleTemplates = {
+    type: (field) => `request.resource.data.${field.name} is ${field.rules.type}`,
+    regex: (field) => `request.resource.data.${field.name}.matches('${field.rules.regex}')`,
+    maxLength: (field) => `request.resource.data.${field.name}.length <= ${field.rules.maxLength}`,
+    minLength: (field) => `request.resource.data.${field.name}.length >= ${field.rules.minLength}`
 }
 
 const capitalize = (s) => {
+    if (!s) {
+        return '';
+    }
+
     return s[0].toUpperCase() + s.slice(1);
 }
 
 const App = () => {
-    let [schema, setSchema] = useState({});
-    let [schemaJson, setSchemaJson] = useState("");
+    let [schema, setSchema] = useState([]);
     let [rules, setRules] = useState("");
 
     const generateRules = () => {
         let rules = "";
+
+        // Generate header
+        rules += "rules_version = '2'\n";
+        rules += "service cloud.firestore {\n"
+        rules += "\tmatch /databases/{database}/documents {\n"
+        
+        // Generate validation functions
         rules += generateValidationFunctionBlock();
-        for (let modelName in schema) {
-            rules += generateRuleBlock(modelName) + "\n";
+
+        // Generate rule blocks
+        for (let model of schema) {
+            rules += generateRuleBlock(model.name);
         }
+
+        rules += "\t}\n";
+        rules += "}";
 
         setRules(rules);
     }
 
     const generateRuleBlock = (modelName) => {
         let functionName = `validate${capitalize(modelName)}Model()`;
-        return `
-match /${modelName}/{${modelName}Document} {
-    allow create: if ${functionName};
-    allow update: if ${functionName} && ownedByCaller();
-    allow delete: if ownedByCaller();
-    allow read: if true;
-}
-        `
+        let ruleBlock = "";
+
+        ruleBlock += `\t\tmatch /${modelName}/{${modelName}Document} {\n`;
+        ruleBlock += `\t\t\tallow create: if ${functionName};\n`;
+        ruleBlock += `\t\t\tallow read: if true;\n`;
+        ruleBlock += `\t\t}\n`;
+
+        return ruleBlock;
     }
 
     const generateValidationFunctionBlock = () => {
         let ruleFunctions = "";
-        for (let modelName in schema) {
-            let modelSchema = schema[modelName];
-            ruleFunctions += processModel(modelName, modelSchema) + "\n\n";
+        for (let model of schema) {
+            ruleFunctions += processModel(model) + "\n";
         }
 
         return ruleFunctions;
     }
 
-    const processModel = (modelName, modelSchema) => {
-        let ruleFunction = `function validate${capitalize(modelName)}Model() {\n\treturn`;
+    const processModel = (model) => {
+        let ruleFunction = `\t\tfunction validate${capitalize(model.name)}Model() {\n\t\t\treturn`;
         let outerSep = "";
-        for (let field in modelSchema) {
-            let fieldSchema = modelSchema[field];
-            let sep = `${outerSep}\n\t\t`;
-            for (let fieldSchemaAttribute in fieldSchema) {
-                let transform = schemaFieldTemplates[fieldSchemaAttribute];
-                if (transform) {
-                    ruleFunction += `${sep} ${transform(field, fieldSchema)}`;
-                    sep = " &&\n\t\t";
+        for (let field of model.fields) {
+            let sep = `${outerSep}\n\t\t\t`;
+            for (let ruleName in field.rules) {
+                let transform = ruleTemplates[ruleName];
+                let ruleValue = field.rules[ruleName];
+                if (transform && ruleValue) {
+                    ruleFunction += `${sep} ${transform(field)}`;
+                    sep = " &&\n\t\t\t";
                 }
             }
             outerSep = " &&";
         }
-        ruleFunction += ";\n}";
+        ruleFunction += ";\n\t\t}";
 
         return ruleFunction;
+    }
+
+    const addModel = () => {
+        setSchema([...schema, {
+            name: "model",
+            fields: []
+        }]);
+    }
+
+    const updateModelName = (modelIndex, newModelName) => {
+        if (!newModelName) {
+            newModelName = "";
+        }
+
+        let schemaCopy = [...schema];
+        let model = {...schema[modelIndex]};
+        model.name = newModelName;
+        schemaCopy[modelIndex] = model;
+
+        setSchema(schemaCopy);
+    }
+
+    const addField = (modelIndex) => {
+        let schemaCopy = [...schema];
+        let model = {...schema[modelIndex]};
+        model.fields.push({
+            name: "newField",
+            rules: {
+                type: "string"
+            }
+        });
+        schemaCopy[modelIndex] = model;
+        setSchema(schemaCopy);
+    }
+
+    const updateField = (modelIndex, fieldIndex, rule, value) => {
+        let schemaCopy = [...schema];
+        let model = {...schema[modelIndex]};
+        let field = {...model.fields[fieldIndex]};
+
+        field.rules[rule] = value;
+        model.fields[fieldIndex] = field;
+        schemaCopy[modelIndex] = model;
+        setSchema(schemaCopy);
+    }
+
+    const updateFieldName = (modelIndex, fieldIndex, newFieldName) => {
+        if (!newFieldName) {
+            newFieldName = "";
+        }
+
+        let schemaCopy = [...schema];
+        let model = {...schema[modelIndex]};
+        let field = {...model.fields[fieldIndex]};
+
+        field.name = newFieldName;
+        model.fields[fieldIndex] = field;
+        schemaCopy[modelIndex] = model;
+        setSchema(schemaCopy);
     }
 
     useEffect(() => {
@@ -77,12 +150,48 @@ match /${modelName}/{${modelName}Document} {
         <div className="generator-div">
             <div id="generator-form">
                 <label>Object Schema</label>
-                <textarea onChange={({target: {value}}) => {setSchemaJson(value)}} onkeydown="if(event.keyCode===9){var v=this.value,s=this.selectionStart,e=this.selectionEnd;this.value=v.substring(0, s)+'\t'+v.substring(e);this.selectionStart=this.selectionEnd=s+1;return false;}"></textarea>
-                <button onClick={() => {setSchema(JSON.parse(schemaJson))}}>Generate</button>
+                { schema.map((model, modelIndex) => {
+                    return (
+                        <div className="model">
+                            <label>Model Name</label>
+                            <input value={model.name} onChange={({target: {value: newModelName}}) => {updateModelName(modelIndex, newModelName)}} />
+                            { model.fields.map((field, fieldIndex) => {
+                                return (
+                                    <div className="field"> 
+                                        <label>Field Name</label>
+                                        <input value={field.name} onChange={({target: {value: newFieldName}}) => {updateFieldName(modelIndex, fieldIndex, newFieldName)}} />
+                                        <label>Type</label>
+                                        <select onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "type", value)}} value={field.rules.type}>
+                                            <option>string</option>
+                                            <option>number</option>
+                                            <option>bool</option>
+                                            <option>object</option>
+                                            <option>array</option>
+                                        </select>
+                                        <label>Regex</label>
+                                        <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "regex", value)}} value={field.rules.regex} />
+                                        <label>Min Length</label>
+                                        <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "minLength", value)}} value={field.rules.minLength} />
+                                        <label>Max Length</label>
+                                        <input type="text" onChange={({target: {value}}) => {updateField(modelIndex, fieldIndex, "maxLength", value)}} value={field.rules.maxLength} />
+                                    </div>
+                                );
+                            })}
+                            <button onClick={() => {addField(modelIndex)}}>Add Field</button>
+                        </div>
+                    )
+                })}
+                <button onClick={addModel}>New Model</button>
             </div>
             <div id="generated-rules">
+                <h2>Rules</h2>
                 <pre>
                     {rules.replaceAll("\t", "  ")}
+                </pre>
+                <div></div>
+                <h2>Data</h2>
+                <pre>
+                    {JSON.stringify(schema, null, 2)}
                 </pre>
             </div>
         </div>

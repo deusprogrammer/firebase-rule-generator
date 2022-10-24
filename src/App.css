@@ -10,13 +10,14 @@
 #generator-form {
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
-#generator-form > label {
+#generator-form label {
   font-weight: bolder;
 }
 
-#generator-form > :is(textarea, button) {
+#generator-form :is(textarea, button) {
   padding: 1.2em;
   font-size: 1.2em;
 }
@@ -26,6 +27,35 @@
 }
 
 #generated-rules {
+  display: flex;
+  flex-direction: column;
   background-color: rgb(0, 173, 204);
   color: white;
+}
+
+#generated-rules div {
+  height: 0px;
+  border: 1px solid white;
+}
+
+.model {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-left: 15px;
+  padding: 10px;
+  background-color: rgb(0, 98, 255);
+  color: white;
+  border-radius: 15px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-left: 15px;
+  padding: 10px;
+  background-color: rgb(114, 116, 120);
+  color: white;
+  border-radius: 15px;
 }
